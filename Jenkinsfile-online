@@ -1,102 +1,102 @@
-管道 {
-  参与者 {
-    节点 {
-      标签'maven'
+pipeline {
+  agent {
+    node {
+      label 'maven'
     }
   }
 
-    參數 {
-        字符串（名称：'TAG_NAME'，默认值：''，说明：''）
+    parameters {
+        string(name:'TAG_NAME',defaultValue: '',description:'')
     }
 
-    环境 {
+    environment {
         DOCKER_CREDENTIAL_ID = 'dockerhub-id'
         GITHUB_CREDENTIAL_ID = 'github'
         KUBECONFIG_CREDENTIAL_ID = 'demo-kubeconfig'
-        预计 = 'docker.io'
+        REGISTRY = 'docker.io'
         DOCKERHUB_NAMESPACE = 'q1239223160'
         GITHUB_ACCOUNT = '1239223160@qq.com'
-        APP_NAME ='devops-java-sample'
+        APP_NAME = 'devops-java-sample'
     }
 
-    段落 {
-        阶段（'结帐 scm'）{
-            脚步 {
-                结帐（供应链管理）
+    stages {
+        stage ('checkout scm') {
+            steps {
+                checkout(scm)
             }
         }
 
-        阶段（'单元测试'）{
-            脚步 {
-                容器（'maven'）{
-                    sh'mvn clean-gs`pwd`/configuration/settings.xml 测试'
+        stage ('unit test') {
+            steps {
+                container ('maven') {
+                    sh 'mvn clean  -gs `pwd`/configuration/settings.xml test'
                 }
             }
         }
  
-        阶段（'构建和推送'）{
-            脚步 {
-                容器（'maven'）{
-                    sh'mvn -Dmaven.test.skip=true -gs`pwd`/configuration/settings.xml 清理包'
-                    sh'docker build-f Dockerfile-online-t $REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:SNAPSHOT-$BRANCH_NAME-$BUILD_NUMBER。'
-                    withCredentials（[用户名密码（密码变量：'DOCKER_PASSWORD'，用户名变量：'DOCKER_USERNAME'，credentialsId："$DOCKER_CREDENTIAL_ID"，）]）{
-                        sh'echo“$DOCKER_PASSWORD”|docker login$REGISTRY-u“$DOCKER_USERNAME”--password-stdin'
-                        sh'docker push $REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:SNAPSHOT-$BRANCH_NAME-$BUILD_NUMBER'
+        stage ('build & push') {
+            steps {
+                container ('maven') {
+                    sh 'mvn  -Dmaven.test.skip=true -gs `pwd`/configuration/settings.xml clean package'
+                    sh 'docker build -f Dockerfile-online -t $REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:SNAPSHOT-$BRANCH_NAME-$BUILD_NUMBER .'
+                    withCredentials([usernamePassword(passwordVariable : 'DOCKER_PASSWORD' ,usernameVariable : 'DOCKER_USERNAME' ,credentialsId : "$DOCKER_CREDENTIAL_ID" ,)]) {
+                        sh 'echo "$DOCKER_PASSWORD" | docker login $REGISTRY -u "$DOCKER_USERNAME" --password-stdin'
+                        sh 'docker push  $REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:SNAPSHOT-$BRANCH_NAME-$BUILD_NUMBER'
                     }
                 }
             }
         }
 
-        阶段（'班级最新内容'）{
-           什么时候{
-             分支 ‘master’
+        stage('push latest'){
+           when{
+             branch 'master'
            }
-           脚步{
-                容器（'maven'）{
-                  sh'docker 标签$REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:SNAPSHOT-$BRANCH_NAME-$BUILD_NUMBER $REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:latest'
-                  sh'docker push $REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:latest'
+           steps{
+                container ('maven') {
+                  sh 'docker tag  $REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:SNAPSHOT-$BRANCH_NAME-$BUILD_NUMBER $REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:latest '
+                  sh 'docker push  $REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:latest '
                 }
            }
         }
 
-        stage('部署至开发') {
-          什么时候{
-            分支 ‘master’
+        stage('deploy to dev') {
+          when{
+            branch 'master'
           }
-          脚步 {
-            输入（id：'deploy-to-dev'，消息：'部署到dev？'）
-            kubernetesDeploy（配置：'deploy / dev-ol / **'，enableConfigSubstitution：true，kubeconfigId：“$KUBECONFIG_CREDENTIAL_ID”）
+          steps {
+            input(id: 'deploy-to-dev', message: 'deploy to dev?')
+            kubernetesDeploy(configs: 'deploy/dev-ol/**', enableConfigSubstitution: true, kubeconfigId: "$KUBECONFIG_CREDENTIAL_ID")
           }
         }
-        stage('使用标签推送'){
-          什么时候{
-            表达{
-              返回 params.TAG_NAME =~ /v.*/
+        stage('push with tag'){
+          when{
+            expression{
+              return params.TAG_NAME =~ /v.*/
             }
           }
-          脚步 {
-              容器（'maven'）{
-                输入（id：'release-image-with-tag'，消息：'发布带标签的图像？'）
-                  withCredentials（[usernamePassword（credentialsId：“$GITHUB_CREDENTIAL_ID”，passwordVariable：'GIT_PASSWORD'，usernameVariable：'GIT_USERNAME'）]）{
-                    sh'git config --global 用户.email“kubesphere@yunify.com”'
-                    sh'git config --global user.name“kubesphere”'
+          steps {
+              container ('maven') {
+                input(id: 'release-image-with-tag', message: 'release image with tag?')
+                  withCredentials([usernamePassword(credentialsId: "$GITHUB_CREDENTIAL_ID", passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
+                    sh 'git config --global user.email "kubesphere@yunify.com" '
+                    sh 'git config --global user.name "kubesphere" '
                     sh 'git tag -a $TAG_NAME -m "$TAG_NAME" '
-                    sh'git push http://$GIT_USERNAME:$GIT_PASSWORD@github.com/$GITHUB_ACCOUNT/devops-java-sample.git --tags --ipv4'
+                    sh 'git push http://$GIT_USERNAME:$GIT_PASSWORD@github.com/$GITHUB_ACCOUNT/devops-java-sample.git --tags --ipv4'
                   }
-                sh'docker 标签$REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:SNAPSHOT-$BRANCH_NAME-$BUILD_NUMBER $REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:$TAG_NAME'
-                sh'docker push $REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:$TAG_NAME'
+                sh 'docker tag  $REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:SNAPSHOT-$BRANCH_NAME-$BUILD_NUMBER $REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:$TAG_NAME '
+                sh 'docker push  $REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:$TAG_NAME '
           }
           }
         }
-        阶段（'部署到生产'）{
-          什么时候{
-            表达{
-              返回 params.TAG_NAME =~ /v.*/
+        stage('deploy to production') {
+          when{
+            expression{
+              return params.TAG_NAME =~ /v.*/
             }
           }
-          脚步 {
-            输入（id：'deploy-to-production'，消息：'部署到生产？'）
-            kubernetesDeploy（配置：'deploy/prod-ol/**'，enableConfigSubstitution：true，kubeconfigId：“$KUBECONFIG_CREDENTIAL_ID”）
+          steps {
+            input(id: 'deploy-to-production', message: 'deploy to production?')
+            kubernetesDeploy(configs: 'deploy/prod-ol/**', enableConfigSubstitution: true, kubeconfigId: "$KUBECONFIG_CREDENTIAL_ID")
           }
         }
     }
